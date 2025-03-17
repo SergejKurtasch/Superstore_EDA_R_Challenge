@@ -1,0 +1,933 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Objective
+
+Use your current knowledge in R, and research to learn more stuff and go beyond your current knowledge to create a comprehensive EDA for the Superstore dataset ([**here**](https://drive.google.com/drive/folders/1aHi9R5MRsylwX_sB6_UP20nYE96MiQ-x?usp=sharing)). Create visualizations and calculations to answer the following business questions.
+
+```{r}
+
+library(dplyr) 
+library(ggthemes)
+library(ggplot2)
+library(forcats)
+library(lubridate)
+library(scales)
+
+
+
+```
+
+```{r}
+superstore <- read.csv("Dataset/Sample - Superstore.csv") 
+
+# Convert date colomns into Date format
+
+superstore$Order.Date <- mdy(superstore$Order.Date)
+superstore$Ship.Date <- mdy(superstore$Ship.Date)
+superstore$Sales <- round(superstore$Sales, 2)
+superstore$Profit <- round(superstore$Profit, 2)
+```
+
+```{r}
+# Delete the unknown '?' symbol from the product name.
+superstore$Product.Name <- iconv(superstore$Product.Name, from = "UTF-8", to = "UTF-8", sub = " ")
+superstore$Product.Name <- gsub("[^ -~]", " ", superstore$Product.Name)
+superstore$Customer.Name <- iconv(superstore$Customer.Name, from = "UTF-8", to = "UTF-8", sub = " ")
+superstore$Customer.Name <- gsub("[^ -~]", " ", superstore$Customer.Name)
+
+```
+
+### Question 1: How does sales performance vary over time?
+
+**Objective:** Identify monthly trends and seasonal patterns.
+
+**Tasks:**
+
+-   Identify which months consistently show sales peaks
+
+-   Find any unusual dips in the trend line
+
+-   **(optional)** Calculate YOY growth rate for the most recent complete year
+
+-   Suggest potential reasons for seasonal patterns
+
+    ```{r}
+    #Create separate columns with order year and month.
+    superstore$Order.Year <- year(superstore$Order.Date)
+    superstore$Order.Month <- month(superstore$Order.Date)
+    superstore <- superstore %>%
+      select(Row.ID, Order.ID, Order.Date, Order.Year, Order.Month, everything())
+    ```
+
+    ```{r}
+    month_year_sales <- superstore %>%
+      group_by(Order.Year, Order.Month) %>%
+      summarise(
+        Total.Sales = sum(Sales),
+        Total.Profit = sum(Profit),
+        .groups = "drop"
+      )
+    month_year_sales
+
+    year_sales <- superstore %>%
+      group_by(Order.Year) %>%
+      summarise(
+        Total.Sales = sum(Sales),
+        Total.Profit = sum(Profit),
+        .groups = "drop"
+      )
+    year_sales
+    ```
+
+    ```{r}
+
+
+    # month to month plot for Sales
+    ggplot(month_year_sales, aes(x = factor(Order.Month), y = Total.Sales, fill = factor(Order.Year))) +
+      geom_bar(stat = "identity", position = "dodge") +
+      facet_wrap(~Order.Year, nrow = 1) +
+      labs(title = "Total Sales by Month and Year",
+           x = "Month",
+           y = "Total Sales") +
+      theme_minimal() +
+      theme(legend.position = "none", 
+            axis.title.y = element_blank(),
+            plot.title = element_text(hjust = 0.5)) +
+      scale_y_continuous(labels = comma) 
+
+
+    # month to month plot for Sales and profit
+    ggplot(month_year_sales, aes(x = factor(Order.Month))) +
+      geom_bar(aes(y = Total.Sales, fill = "Total Sales"), stat = "identity", position = position_dodge(width = 0.9), width = 0.8) +
+      geom_bar(aes(y = Total.Profit, fill = "Total Profit"), stat = "identity", position = position_dodge(width = 0.9), width = 0.8) +
+      facet_wrap(~Order.Year, nrow = 1) +
+      labs(title = "Total Sales and Profit by Month and Year",
+           x = "Month",
+           y = "") +
+      theme_minimal() +
+      theme(legend.title = element_blank(), 
+            legend.position = "top",  
+            axis.title.y = element_blank(), 
+            plot.title = element_text(hjust = 0.5)) +
+      scale_y_continuous(labels = comma)
+      
+    # YOY plot for Sales and Profit
+    ggplot(year_sales,aes(x = factor(Order.Year))) +
+      geom_bar(aes(y = Total.Sales, fill = "Total Sales"), stat = "identity") +
+      geom_bar(aes(y = Total.Profit, fill = "Total Profit"), stat = "identity") +
+      labs(title = "Total Sales and Profit by Year",
+           x = "Year",
+           y = "") +
+      theme_minimal() +
+      theme(  plot.title = element_text(hjust = 0.5)) +
+      scale_y_continuous(labels = comma) +
+      guides(fill = guide_legend(title = NULL)) 
+    ```
+
+### Sales and Profit Analysis
+
+#### 1. Overall Trend
+
+-   Sales and Profit are steadily growing *(except for 2015, when sales slightly declined).*\
+-   In 2015, sales decreased, but profit increased, indicating a change in **pricing strategy** or **cost reduction**.
+
+#### 2. Seasonal Fluctuations
+
+##### High and Low Sales Periods
+
+-   **The highest sales** occur from **September to December**.\
+-   **The lowest sales** are observed in **January and February**.
+
+##### Possible Reasons for Seasonal Fluctuations
+
+-   **High sales at the end of the year** may be linked to the holiday shopping season (*Black Friday, Christmas, New Year*).\
+-   **The decline at the beginning of the year** is due to lower consumer spending after high expenses in December.
+
+#### 3. Next Steps
+
+-   **A detailed analysis** of sales dynamics by product category could provide **better insights** into the reasons for seasonal fluctuations.
+
+===============================================================
+
+### Question 2: Which product categories have the best/worst profit margins?
+
+**Objective:** Identify high/low performing product categories
+
+**Tasks:**
+
+-   Identify which category has the thinnest margins
+
+-   Calculate the profit margin difference between top and bottom categories
+
+-   Suggest strategies to improve low-performing categories
+
+```{r}
+
+
+superstore <- superstore %>%
+  mutate(Profit.Margin = percent(Profit / Sales))
+
+category_sales <- superstore %>%
+  group_by(Category, Sub.Category) %>%
+  summarise(
+    Total_Sales = sum(Sales),
+    Total_Profit = sum(Profit),
+    Profit_Margin = Total_Profit / Total_Sales,
+    Mean.Discount =  1 - round(sum(Sales) / sum(Sales / (1 - Discount)), 2),
+    .groups = "drop"
+  ) %>%
+ arrange(desc(Profit_Margin))
+
+category_sales <- category_sales %>%
+  mutate(Note = case_when(
+    Profit_Margin == max(Profit_Margin) ~ "Top sub category",
+    Profit_Margin == min(Profit_Margin) ~ "Bottom sub category",
+    TRUE ~ as.character(NA)
+    ))
+
+top_category <- category_sales %>%
+  filter(Note == "Top sub category")
+
+bottom_category <- category_sales %>%
+  filter(Note == "Bottom sub category")
+
+
+profit_difference <- top_category$Total_Profit - bottom_category$Total_Profit
+margin_dif <- as.numeric(top_category$Profit_Margin) - 
+  as.numeric(bottom_category$Profit_Margin)
+
+percentage_tables_sales <- percent(bottom_category$Total_Sales / sum(category_sales$Total_Sales), accuracy = 0.1)
+
+
+cat("Profit difference between top and bottom categories", profit_difference, "\n")
+cat("Margin difference between top and bottom categories", percent(margin_dif), "\n")
+cat("'Tables' sub category consists of ", percentage_tables_sales, "% of Total Sales\n")
+
+
+category_sales <- category_sales %>%
+  mutate(Profit_Margin = percent(Profit_Margin, , accuracy = 0.01))
+
+year_sales_tables <- superstore %>%
+  filter(Sub.Category == "Tables") %>%
+  group_by(Order.Year, Order.Month) %>%
+  summarise(
+    Total.Sales = sum(Sales),
+    Total.Profit = sum(Profit),
+    Mean.Discount =  1 - round(sum(Sales) / sum(Sales / (1 - Discount)), 2),
+    .groups = "drop"
+  )
+
+
+year_sales_tables
+
+category_sales
+```
+
+```{r}
+category_sales <- category_sales %>%
+  mutate(Profit_Margin_Numeric = Total_Profit / Total_Sales)
+
+ggplot(category_sales, aes(y = factor(Sub.Category))) +
+  geom_bar(aes(x = Total_Sales, fill = "Total_Sales"), stat = "identity", position = "dodge") +
+  geom_bar(aes(x = Total_Profit, fill = "Total_Profit"), stat = "identity", position = "dodge") +
+  geom_point(aes(x = Profit_Margin_Numeric * max(Total_Sales, Total_Profit), color = "Profit Margin"), size = 2) +
+  geom_text(aes(x = Profit_Margin_Numeric * max(Total_Sales, Total_Profit), label = scales::percent(Profit_Margin_Numeric, accuracy = 0.1)) , color = "black", 
+            hjust = 1.3, size = 3.5) +
+  scale_color_manual(name = NULL, values = c("Profit Margin" = "black", "Discount" = "blue")) +
+  
+  
+    geom_point(aes(x = Mean.Discount * max(Total_Sales, Total_Profit), color = "Discount"), size = 2) +
+  geom_text(aes(x = Mean.Discount * max(Total_Sales, Total_Profit), label = scales::percent(Mean.Discount, accuracy = 1.0)), 
+            color = "blue", hjust = - 0.5, size = 3.5) +
+  
+  
+  labs(title = "Total Sales, Profit and Profit Margin by Category and Sub.Category",
+       y = "Category",
+       x = "") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "top",
+        axis.title.y = element_blank()) +
+  scale_x_continuous(labels = comma) +
+  guides(fill = guide_legend(title = NULL), color = guide_legend(title = NULL)) +
+  facet_grid(Category ~ ., scales = "free", space = "free") 
+
+
+# month to month plot for Sales and profit for Tables sub.Category
+ggplot(year_sales_tables, aes(x = factor(Order.Month))) + 
+  geom_bar(aes(y = Total.Sales, fill = "Total Sales"), stat = "identity", position = position_dodge(width = 0.9), width = 0.8) + 
+  geom_bar(aes(y = Total.Profit, fill = "Total Profit"), stat = "identity", position = position_dodge(width = 0.9), width = 0.8) + 
+  geom_point(aes(y = Mean.Discount * max(Total.Sales, Total.Profit), color = "Discount"), size = 2) +
+  geom_text(aes(y = Mean.Discount * max(Total.Sales, Total.Profit), label = scales::percent(Mean.Discount, accuracy = 1.0)), 
+            color = "blue", hjust = -0.5, size = 3, angle = 90) +
+  facet_wrap(~Order.Year, nrow = 1) +
+  labs(title = "Total Sales, Profit and Discount by Month and Year for 'Tables' sub category", 
+       x = "Month", 
+       y = "") + 
+  theme_minimal() + 
+  theme(legend.title = element_blank(), 
+        legend.position = "top", 
+        axis.title.y = element_blank(), 
+        plot.title = element_text(hjust = 0.5)) + 
+  scale_y_continuous(labels = comma) +
+  scale_color_manual(name = "Discount", values = c("Discount" = "blue")) +
+  guides(fill = guide_legend(title = NULL))
+```
+
+### Category Analysis
+
+#### 1. Identifying the Category with the Lowest Margins
+
+The category with the lowest margins and profit is **"Tables"** with a negative profit margin of **-8.56%**. Analysis of this category by month shows that it has been and remains unprofitable over time, with the maximum loss occurring in the last year of 2017. At the same time, high discounts are regularly applied in this category. A detailed graph for this category shows the dependency of losses on the size of the discount.
+
+#### 2. Comparing Subcategories
+
+-   **Bottom subcategory** - Furniture, Tables
+
+-   **Top subcategory** - Office Supplies, Labels
+
+    -   Profit difference between top and bottom categories - **23,271.74**
+    -   Margin difference between top and bottom categories - **53%**
+
+#### 3. Conclusions
+
+Quick decision-making to improve the situation can significantly impact the overall Sales and Profit of the entire company, as this category ranks 4th in terms of sales volume and accounts for **9%** of the total sales volume. Perhaps, it is necessary to reduce the discount size to such a level that no sale of goods from this category will bring losses in the future. The "Total Sales, Profit and Discount by Month and Year for 'Tables' subcategory" graph shows that a slight increase in the discount by **3-5%** leads to a significant decrease in profit.
+
+=================================================================
+
+### Question 3: How do regional performances compare?
+
+**Objective:** Compare sales distribution and profitability across regions
+
+**Tasks:**
+
+-   Identify which region has both high sales and high profitability
+
+-   Find any regions with negative profits
+
+-   Analyze if high sales always correlate with high profits
+
+-   Propose regional-specific strategies based on findings
+
+```{r}
+# Sales data by 4 regions
+region_sales <- superstore %>%
+  group_by(Region) %>%
+  summarise(
+    Total_Sales = sum(Sales),
+    Total_Profit = sum(Profit),
+    Profit_Margin = Total_Profit / Total_Sales,
+    Mean_Discount = 1 - round(sum(Sales) / sum(Sales / (1 - Discount)), 2),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Profit_Margin))
+
+# Data for states with negative Profit
+negativ_state_profit <- superstore %>%
+  group_by(Region, State) %>%
+  summarise(
+    Total_Sales = sum(Sales),
+    Total_Profit = sum(Profit),
+    Profit_Margin = Total_Profit / Total_Sales,
+    Mean_Discount = 1 - round(sum(Sales) / sum(Sales / (1 - Discount)), 2),
+    .groups = "drop"
+  ) %>%
+  filter(Total_Profit < 0) %>%
+  arrange(Profit_Margin)
+
+# Top 10 states by Profit
+top10_states_sales <- superstore %>%
+  group_by(Region, State) %>%
+  summarise(
+    Total_Sales = sum(Sales),
+    Total_Profit = sum(Profit),
+    Profit_Margin = Total_Profit / Total_Sales,
+    Mean_Discount = 1 - round(sum(Sales) / sum(Sales / (1 - Discount)), 2),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Profit_Margin)) %>%
+  slice_head(n = 10)
+
+
+
+region_sales
+negativ_state_profit
+top10_states_sales
+```
+
+```{r}
+# Total Sales, Profit and Margin by Regions graph
+ggplot(region_sales, aes(y = factor(Region))) +
+  geom_bar(aes(x = Total_Sales, fill = "Total_Sales"), stat = "identity", position = "dodge") +
+  geom_bar(aes(x = Total_Profit, fill = "Total_Profit"), stat = "identity", position = "dodge") +
+  geom_point(aes(x = Profit_Margin * max(Total_Sales, Total_Profit), color = "Profit Margin"), size = 2) +
+  geom_text(aes(x = Profit_Margin * max(Total_Sales, Total_Profit), label = scales::percent(Profit_Margin, accuracy = 0.1)),
+            color = "black", vjust = 1.8, size = 3) +
+  geom_point(aes(x = Mean_Discount * max(Total_Sales, Total_Profit), color = "Discount"), size = 2) +
+  geom_text(aes(x = Mean_Discount * max(Total_Sales, Total_Profit), label = scales::percent(Mean_Discount, accuracy = 1.0)), 
+            color = "blue", vjust = -0.8, size = 3) +
+  scale_color_manual(name = NULL, values = c("Profit Margin" = "black", "Discount" = "blue")) + 
+  labs(title = "Total Sales, Profit and Margin by Regions",
+       y = "Region",
+       x = "") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        strip.text.y = element_blank(),
+        legend.position = "top") +
+  scale_x_continuous(labels = comma) +
+  guides(fill = guide_legend(title = NULL), color = guide_legend(title = NULL)) +
+  facet_grid(Region ~ ., scales = "free", space = "free")
+
+
+
+# States with negative Profit graph
+ negativ_state_profit <- negativ_state_profit %>%
+   mutate(State = fct_reorder(State, Total_Profit))
+
+ggplot(negativ_state_profit, aes(y = factor(State))) +
+  geom_bar(aes(x = Total_Sales, fill = "Total_Sales"), stat = "identity", position = "dodge") +
+  geom_bar(aes(x = Total_Profit, fill = "Total_Profit"), stat = "identity", position = "dodge") +
+  facet_grid(~Region) +
+  geom_point(aes(x = Profit_Margin * max(Total_Sales, Total_Profit), color = "Profit Margin"), size = 2) +
+  geom_text(aes(x = Profit_Margin * max(Total_Sales, Total_Profit), label = scales::percent(Profit_Margin, accuracy = 0.1)) , color = "black", 
+            hjust = - 0.2, size = 3.5) +
+  scale_color_manual(name = NULL, values = c("Profit Margin" = "black", "Discount" = "blue")) +
+  geom_point(aes(x = Mean_Discount * max(Total_Sales, Total_Profit), color = "Discount"), size = 2) +
+  geom_text(aes(x = Mean_Discount * max(Total_Sales, Total_Profit), label = scales::percent(Mean_Discount, accuracy = 1.0)), 
+            color = "blue", hjust = -0.5, size = 3) +
+  labs(title = "Total Sales, Profit and Margin by States with negative Profit",
+        y = "", x = "") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        strip.text.y = element_blank(),
+        legend.position = "top") +
+  scale_x_continuous(labels = comma) +
+  guides(fill = guide_legend(title = NULL), color = guide_legend(title = NULL)) +
+  facet_grid(State ~ ., scales = "free", space = "free")
+
+
+# Top 10 best Profit States graph
+ top10_states_sales <- top10_states_sales %>%
+   mutate(State = fct_reorder(State, Total_Profit))
+
+ggplot(top10_states_sales, aes(y = factor(State))) +
+  geom_bar(aes(x = Total_Sales, fill = "Total_Sales"), stat = "identity", position = "dodge") +
+  geom_bar(aes(x = Total_Profit, fill = "Total_Profit"), stat = "identity", position = "dodge") +
+  facet_grid(~Region) +
+  geom_point(aes(x = Profit_Margin * max(Total_Sales, Total_Profit), color = "Profit Margin"), size = 2) +
+  geom_text(aes(x = Profit_Margin * max(Total_Sales, Total_Profit), label = scales::percent(Profit_Margin, accuracy = 0.1)) , color = "black", 
+            hjust = - 0.2, size = 3.5) +
+  scale_color_manual(name = NULL, values = c("Profit Margin" = "black", "Discount" = "blue")) +
+  geom_point(aes(x = Mean_Discount * max(Total_Sales, Total_Profit), color = "Discount"), size = 2) +
+  geom_text(aes(x = Mean_Discount * max(Total_Sales, Total_Profit), label = scales::percent(Mean_Discount, accuracy = 1.0)), 
+            color = "blue", hjust = -0.5, size = 3) +
+  labs(title = "Total Sales, Profit and Margin by States with negative Profit",
+        y = "", x = "") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        strip.text.y = element_blank(),
+        legend.position = "top") +
+  scale_x_continuous(labels = comma) +
+  guides(fill = guide_legend(title = NULL), color = guide_legend(title = NULL)) +
+  facet_grid(State ~ ., scales = "free", space = "free")
+
+
+```
+
+### Analysis of Profit, Margin, and Discounts by Region and State
+
+#### Regional Differences
+
+Regions **West** and **East** perform best, with profit and margin above average, largely due to lower average discounts (around 16-19 %). The lowest margin is observed in the **Central** region, where the average discount is significantly higher (25%).
+
+#### States with Losses
+
+The main losses are concentrated in states like **Ohio (East)**, **Texas (Central)**, and **Pennsylvania (East)**, where high discount levels (up to 42%) directly result in negative profits.
+
+#### Impact of Discounts
+
+High discount levels affect profitability more than geographical location. Every region has states with negative profits, always linked to high discount rates around 38%. States with minimal discounts (e.g., in **West** and **East**) exhibit consistent growth in margin and profit. However, such states are also present in **Central** and **South** regions.
+
+#### Recommendations for Improvement
+
+1.  **Reduce discounts** in problematic regions and states.
+2.  Conduct a **detailed analysis** of specific causes of losses in states with negative profits, such as **Ohio**, **Colorado**, **Texas, Pennsylvania** and **Illinois**, to identify opportunities for improvement.
+
+===============================================================
+
+### Question 4: What does customer segmentation reveal?
+
+**Objective:** Identify valuable customer groups using RFM analysis
+
+**Tasks:**
+
+-   Calculate percentage of customers in each segment
+
+-   Identify which segment generates the most revenue
+
+-   Develop retention strategies for “At Risk” customers
+
+-   Suggest marketing approaches for “High Spenders”
+
+```{r}
+
+# Data for each order (aggregated without item-level breakdown)
+orders <- superstore %>%
+  group_by(Order.ID) %>%
+  summarize(
+    across(-c(Row.ID, Profit.Margin, Discount, Product.ID, Category, Sub.Category, Product.Name, Sales, Quantity, Profit), first, .names = "{.col}"),
+    Order_Sum = sum(Sales),                # order sum
+    Order_Quantity = sum(Quantity),          # total quantity of items in the order
+    Order_Profit = sum(Profit),              # total order profit
+    Order_Mean_Discount = 1 - round(sum(Sales) / sum(Sales / (1 - Discount)), 2),  # average discount
+    Order_Margin = round(Order_Profit / Order_Sum, 2)  # profit margin
+  )
+
+# Aggregating data by Customer.ID
+customer_summary <- orders %>%
+  group_by(Customer.ID) %>%
+  summarise(
+    across(-c(Order.Year, Order.Month, Ship.Date, Order.ID, Order_Sum, Order_Quantity, Order_Profit, Order_Mean_Discount, Order_Margin), first, .names = "{.col}"),
+    Total_Orders = n(),                          # total number of orders
+    Total_Sales = sum(Order_Sum),                # total sales from all orders
+    Total_Profit = sum(Order_Profit),
+    Mean_Discount = 1 - round(sum(Order_Sum) / sum(Order_Sum / (1 - Order_Mean_Discount)), 2),
+    Ship.Mode = names(which.max(table(Ship.Mode))), # Most frequent Ship.Mode
+    .groups = "drop"
+  )
+
+
+last_order_check <- orders %>%
+  group_by(Customer.ID) %>%
+  summarise(Last_Order_Date = max(as.Date(Order.Date)), .groups = "drop")
+
+# Объединяем с customer_summary
+customer_summary <- customer_summary %>%
+ # select(-Last_Order_Date) %>%
+  left_join(last_order_check, by = "Customer.ID")
+
+
+# Reference dates for Recency scoring
+start_date_2017 = as.Date("2017-07-01")
+end_date_2017 = as.Date("2017-12-31")
+start_date_2016 = as.Date("2016-07-01")
+end_date_2016 = as.Date("2017-06-30")
+
+# Add scores for each criterion
+customer_summary <- customer_summary %>%
+  mutate(
+    # Recency Score (R_Score)
+    R_Score = case_when(
+      Last_Order_Date >= start_date_2017 & Last_Order_Date <= end_date_2017 ~ 2, # Last order from July to Dec 2017
+      Last_Order_Date >= start_date_2016 & Last_Order_Date <= end_date_2016 ~ 1, # Last order from July 2016 to June 2017
+      Last_Order_Date < start_date_2016 ~ 0,                                    # Last order before July 2016
+      TRUE ~ 0
+    ),
+    
+    # Frequency Score (F_Score)
+    F_Score = case_when(
+      Total_Orders >= 10 ~ 3,                       # 10 or more orders
+      Total_Orders >= 4 & Total_Orders <= 9 ~ 2,    # Between 4 and 9 orders
+      Total_Orders >= 2 & Total_Orders <= 3 ~ 1,    # Between 2 and 3 orders
+      Total_Orders == 1 ~ 0,                        # Only 1 order
+      TRUE ~ 0
+    ),
+    
+    # Monetary Score (M_Score) using ntile() for percentiles
+    M_Score = ntile(Total_Sales, 5)  # Divide into 5 groups (1 - lowest, 5 - highest)
+  )
+
+# Calculate overall customer score
+customer_summary <- customer_summary %>%
+  mutate(
+    Total_Score = R_Score + F_Score + M_Score  # Sum scores for the total result
+  )
+
+customer_summary <- customer_summary %>%
+  mutate(
+    Score_Color = case_when(
+      Total_Score >= 0 & Total_Score <= 4 ~ "red",    # 0-4: red
+      Total_Score >= 5 & Total_Score <= 7 ~ "yellow", # 5-7: yellow
+      Total_Score >= 8 & Total_Score <= 10 ~ "green"  # 8-10: green
+    )
+  )
+
+# Summary table for customer counts by Total_Score and Score_Color
+score_summary <- customer_summary %>%
+  group_by(Total_Score, Score_Color) %>%
+  summarise(Count = n(), .groups = "drop")  # Count of customers grouped by Total_Score and Score_Color
+
+# Display results
+print(customer_summary)
+
+```
+
+```{r}
+# Bar chart to show distribution of Total_Score by Score_Color
+ggplot(score_summary, aes(x = factor(Total_Score), y = Count, fill = Score_Color)) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +  # Bar chart with outlined bars
+  geom_text(aes(label = Count), vjust = -0.5, size = 4) +      # Numerical labels for the count on top of the bars
+  scale_fill_identity(name = "Score Color") +                  # Use colors directly from Score_Color
+  labs(
+    title = "Distribution of customers based on RFM analysis",
+    x = "Total Score",
+    y = "Count of Customers"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 12),  # Larger axis labels for readability
+    axis.text = element_text(size = 10),  # Adjust axis text size
+    legend.position = "top"  # Place legend at the top
+  ) 
+
+
+# Scatter plot for customer order analysis with Total_Sales in legend
+ggplot(customer_summary, aes(x = Last_Order_Date, y = Total_Orders, size = Total_Sales, color = Score_Color)) +
+  geom_point(alpha = 0.7) +  # Points with transparency
+  scale_size_continuous(range = c(1, 8), name = "Total Sales (Point Size)") +  # Add name for the size legend
+  scale_color_identity(name = "Score Color") +  # Add name for the color legend
+  labs(
+    title = "Distribution of customers based on RFM analysis",
+    x = "Last Order Date",
+    y = "Total Number of Orders",
+    size = "Total Sales (Point Size)"  # Explain size represents Total Sales
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 12),  # Larger axis labels for readability
+    axis.text = element_text(size = 10),  # Adjust axis text size
+    legend.position = "top"  # Place legend at the top
+  )
+
+
+# Scatter plot for Total Profit vs Mean Discount with Score_Color
+ggplot(customer_summary, aes(x = Mean_Discount, y = Total_Profit, color = Score_Color)) +
+  geom_point(size = 3, alpha = 0.7) +  # Points with size and transparency
+  scale_color_identity() +             # Use colors directly from Score_Color
+  labs(
+    title = "Profit vs Discount with RFM Coloring",
+    x = "Mean Discount",
+    y = "Total Profit"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 12),  # Larger axis labels for readability
+    axis.text = element_text(size = 10),  # Adjust axis text size
+    legend.position = "none"  # Remove legend since colors are already explained
+  )
+
+
+# Scatter plot for Total Profit dependency on Total Score
+ggplot(customer_summary, aes(x = Total_Score, y = Total_Profit)) +
+  geom_point(alpha = 0.7, color = "blue", size = 3) +  # Points with size and transparency
+  geom_smooth(method = "lm", se = FALSE, color = "red", linetype = "dashed") + # Linear trend line
+  labs(
+    title = "Dependency of Total Profit on Total Score",
+    x = "Total Score",
+    y = "Total Profit"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 12),  # Larger axis labels for readability
+    axis.text = element_text(size = 10)  # Adjust axis text size
+  )
+
+
+# Scatter plot for Total Profit dependency on Total Sales with Score_Color
+ggplot(customer_summary, aes(x = Total_Sales, y = Total_Profit, color = Score_Color)) +
+  geom_point(alpha = 0.7, size = 3) +  # Points with transparency and size
+  geom_smooth(method = "lm", se = FALSE, color = "black", linetype = "dashed") + # Linear trend line
+  scale_color_identity(name = "Score Color") +  # Use colors directly from Score_Color
+  labs(
+    title = "Dependency of Total Profit on Total Sales by Score Color",
+    x = "Total Sales",
+    y = "Total Profit"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 12),  # Larger axis labels for readability
+    axis.text = element_text(size = 10),  # Adjust axis text size
+    legend.position = "top"  # Place legend at the top
+  )
+
+```
+
+### RFM Analysis Criteria
+
+**R (Recency):** - 2 points if the last order was within the last 6 months. - 1 point if the last order was between 6 to 18 months ago. - 0 points if the last order was more than 18 months ago.
+
+**F (Frequency):** - 3 points if the client made 10 or more orders. - 2 points if the client made 4 to 9 orders. - 1 point if the client made 2–3 orders. - 0 points if the client made only 1 order.
+
+**M (Monetary Score):** - Calculated using the `ntile()` function to split the data into percentiles, divided into 5 groups (1 = lowest, 5 = highest).
+
+### Client Groups Based on RFM Analysis
+
+Based on the RFM analysis, all clients were divided into three groups:
+
+**High-value clients (8–10 points, green color in the graphs):** - These clients represent the main value for the business. They make more orders, bring high income, and require minimal attention in terms of discounts. - Share of these clients: **37% of the total client base.**
+
+**Medium-value clients (5–7 points, yellow color in the graphs):** - The largest group, making up **48% of the client base**. These clients generate part of the profit but require individualized strategies to retain and increase their value.
+
+**Low-value clients (0–4 points, red color in the graphs):** - Often associated with losses due to high discounts and low order volumes. - Share of these clients: **15% of the total client base.**
+
+### Summary Based on Graph Analysis
+
+1.  **Retention of High-Value Clients:**
+    -   A significant share of green points (high-value clients) in the right-side cluster of the second graph ("Distribution of customers based on RFM analysis") highlights a positive trend in retaining the most valuable clients. These clients continued placing orders until the latest recorded date.
+2.  **Impact of High Discounts:**
+    -   High discounts not only reduce profit but also tend to attract low-value clients (red points). In the third graph ("Profit vs Discount with RFM Coloring"), red points often fall within the zone of discounts exceeding 20%. This suggests that excessive discounts may attract clients who buy only during promotions and lack loyalty or long-term value.
+3.  **Correlation Between Profit, Sales, and Value:**
+    -   In the fourth and fifth graphs, a strong positive correlation is observed between sales and profit, as well as between profit and client category (green, yellow, red). This confirms the importance of focusing efforts on clients contributing the most to total revenue.
+
+### Recommendations for Discounts and Profit
+
+-   High discounts correlate directly with reduced profitability.
+-   Optimizing discount policies is critical for increasing profit margins.
+-   Most loyal clients with high scores (8–10) make frequent orders and tend to require lower average discounts (less than 10%). Retention tools should focus on these high-value clients.
+
+===============================================================
+
+### Question 5: How does shipping mode affect profitability?
+
+**Objective:** Analyze cost-to-serve across shipping modes
+
+**Tasks:**
+
+-   Compare profit margins across shipping modes
+
+-   Calculate profit per order for each shipping mode
+
+-   Suggest optimal shipping strategy based on findings
+
+```{r}
+
+total_orders <- nrow(orders)  # Total number of orders in the dataset
+
+ship_mode_summary <- orders %>%
+  group_by(Ship.Mode) %>%
+  summarise(
+    Weighted_Avg_Margin = sum(Order_Margin * Order_Sum, na.rm = TRUE) / sum(Order_Sum, na.rm = TRUE),  # Weighted Margin
+    Total_Profit = sum(Order_Profit, na.rm = TRUE),  # Total Profit
+    Number_of_Orders = n(),  # Count of orders
+    Profit_Per_Order = Total_Profit / Number_of_Orders,  # Profit per order
+    Order_Percentage = round((Number_of_Orders / total_orders)*100, 2),  # Percentage of orders for this shipping mode
+    .groups = "drop"
+  )
+
+max_profit <- max(ship_mode_summary$Total_Profit, na.rm = TRUE)
+max_margin <- max(ship_mode_summary$Weighted_Avg_Margin, na.rm = TRUE)
+scaling_factor <- max_profit / max_margin
+
+
+# Print summary table
+print(ship_mode_summary)
+
+
+
+```
+
+```{r}
+
+# Plot Total Profit and Weighted Avg Margin
+ggplot(ship_mode_summary, aes(x = Ship.Mode)) +
+  # Bar plot for Total Profit
+  geom_bar(aes(y = Total_Profit, fill = Ship.Mode), stat = "identity", color = "black", width = 0.7) +
+  # Line connecting Weighted_Avg_Margin points
+  geom_line(aes(y = Weighted_Avg_Margin * scaling_factor, group = 1), 
+            color = "blue", size = 1) +
+  # Points for Weighted_Avg_Margin
+  geom_point(aes(y = Weighted_Avg_Margin * scaling_factor), 
+             color = "blue", size = 3) +
+  # Labels for Weighted_Avg_Margin
+  geom_text(aes(y = Weighted_Avg_Margin * scaling_factor, 
+                label = percent(round(Weighted_Avg_Margin, 4))), 
+            vjust = 1.8, color = "blue", size = 4) +
+  # Labels and Titles
+  labs(
+    title = "Total Profit and Weighted Average Margin by Shipping Mode",
+   
+    x = "Shipping Mode",
+    y = "Total Profit",
+    fill = "Shipping Mode"
+  ) +
+  # Secondary Y-axis for Weighted_Avg_Margin
+  scale_y_continuous(
+    sec.axis = sec_axis(~ . / scaling_factor, 
+                        name = "Weighted Avg Margin (%)")
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 12),  # Larger axis labels
+    axis.text = element_text(size = 10),  # Adjust axis text size
+    legend.position = "none"  # Place legend at the top
+  )
+
+
+ggplot(ship_mode_summary, aes(x = Ship.Mode, y = Profit_Per_Order, fill = Ship.Mode)) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +  # Bar plot for Profit_Per_Order
+  geom_text(aes(label = paste0(round(Order_Percentage, 1), "%"), y = Profit_Per_Order), 
+            vjust = -0.5, color = "black", size = 3) +  # Add Order_Percentage as labels
+  labs(
+    title = "Profit Per Order by Shipping Mode",
+     subtitle = "Text above each column indicates the percentage of orders out of the total number",
+    x = "Shipping Mode",
+    y = "Profit Per Order",
+    fill = "Shipping Mode"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 12),  # Larger axis labels
+    axis.text = element_text(size = 10),  # Adjust axis text size
+    legend.position = "none"  # Remove legend for a cleaner look
+  )
+
+
+# Plot: Total Profit per Customer by Shipping Mode with Score_Color
+ggplot(customer_summary, aes(x = Ship.Mode, y = Total_Profit, color = Score_Color)) +
+  geom_jitter(width = 0.2, alpha = 0.7, size = 3) +  # Jitter to avoid overlapping points
+  scale_color_identity(name = "Score Color", guide = "legend") +  # Use Score_Color for coloring
+  labs(
+    title = "Distribution of Customers by Shipping Mode and Total Profit",
+    x = "Shipping Mode",
+    y = "Total Profit",
+    color = "Score Color"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 12),  # Larger axis labels for readability
+    axis.text = element_text(size = 10),  # Adjust axis text size
+    legend.position = "top"  # Place legend at the top
+  )
+
+
+
+# Step 1: Calculate the number of customers in each Score_Color category for each Ship.Mode
+category_distribution <- customer_summary %>%
+  group_by(Ship.Mode, Score_Color) %>%
+  summarise(Customer_Count = n(), .groups = "drop")
+
+# Step 2: Create the bar plot
+ggplot(category_distribution, aes(x = Ship.Mode, y = Customer_Count, fill = Score_Color)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +  # Bar plot with dodged bars
+  scale_fill_identity(name = "Score Color", guide = "legend") +       # Use Score_Color as fill
+  labs(
+    title = "Customer Distribution by Score Color for Each Shipping Mode",
+    x = "Shipping Mode",
+    y = "Number of Customers",
+    fill = "Score Color"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),  # Centered and bold title
+    axis.title = element_text(size = 12),  # Larger axis labels
+    axis.text = element_text(size = 10),  # Adjust axis text size
+    legend.position = "top"  # Place legend at the top
+  )
+
+
+library(dplyr)
+library(ggplot2)
+
+# Step 1: Add Avg_Order_Sum to ship_mode_summary
+ship_mode_summary <- orders %>%
+  group_by(Ship.Mode) %>%
+  summarise(
+    Weighted_Avg_Margin = sum(Order_Margin * Order_Sum, na.rm = TRUE) / sum(Order_Sum, na.rm = TRUE),  # Weighted Margin
+    Total_Profit = sum(Order_Profit, na.rm = TRUE),  # Total Profit
+    Number_of_Orders = n(),  # Count of orders
+    Profit_Per_Order = Total_Profit / Number_of_Orders,  # Profit per order
+    Avg_Order_Sum = sum(Order_Sum, na.rm = TRUE) / Number_of_Orders,  # Average Order Sum
+    .groups = "drop"
+  )
+
+
+```
+
+### Analysis of Shipping Modes
+
+#### Insights:
+
+1.  **Most Popular Shipping Mode:**
+    -   **Standard Class** accounts for almost **60% of all orders**.
+    -   This type of delivery is used by customers across all categories (`Score_Color` groups).
+    -   **Profit per Order** for Standard Class is the lowest compared to other shipping modes.
+2.  **Highest Profit and Margin:**
+    -   **First Class** delivery has the **highest margin (\~14%)** and **highest Profit per Order**.
+    -   Customers opting for First Class likely prioritize speed over cost.
+    -   These orders tend to have **smaller discounts** and therefore higher margins.
+
+#### Recommendations:
+
+-   Encourage customers to upgrade to **First Class delivery** where possible.
+-   This can serve as an **intangible loyalty incentive** offered by the superstore, potentially increasing customer satisfaction.
+-   Promote First Class delivery as an alternative to **large discount-based incentives** that could negatively impact profit margins.
+
+===============================================================
+
+### Extra Challenge
+
+-   Identify 3 actionable business recommendations.
+
+    -   **Optimize Discount Strategy:**
+
+        -   Reduce excessive discounts (above 20%) in unprofitable categories (like "Tables") and problematic regions/states (e.g., Ohio, Texas, Pennsylvania).
+
+        -   Focus on offering discounts only to high-value clients or in high-margin categories to avoid unnecessary profit losses.
+
+    -   **Focus on High-Value Clients:**
+
+        -   Retain and nurture high-value clients (RFM scores 8–10) by offering personalized loyalty programs and benefits.
+
+        -   These clients bring the highest profitability and require minimal discounts (typically less than 10%).
+
+    -   **Leverage High-Margin Shipping Options:**
+
+        -   Promote **First Class shipping**, which has the highest profit margins and order profitability, as a premium service.
+
+        -   Use this as a strategy to reduce the dependency on discount-based incentives.
+
+-   Propose 2 new questions for deeper analysis.
+
+<!-- -->
+
+-   **How do discounts influence customer retention and lifetime value across different RFM segments?**
+
+    -   By analyzing the relationship between discount levels and customer behavior within each RFM group (high, medium, and low value), you can identify optimal discount strategies to retain high-value clients without sacrificing profitability.
+
+-   **What product categories contribute the most to repeat purchases, and how does their profitability compare across different regions?**
+
+    -   Understanding the regional performance of top categories and their role in driving repeat business can guide targeted marketing efforts and inventory optimization for specific locations.
+
+<!-- -->
+
+-   Estimate potential financial impact of your recommendations.
+
+```{r}
+negative_profit_2017 <- superstore %>%
+  filter(Order.Year == "2017" & Profit < 0) %>%  
+  summarise(Total_Negative_Profit = sum(Profit, na.rm = TRUE)) #
+negative_profit_2017
+```
+
+If the company simply refuse to fulfill all orders that result in losses, it would be possible to avoid losses amounting to -53,836 next year.
+
+**Discussion Points:**
+
+How do sales trends correlate with marketing initiatives?
+
+Are there regional preferences for product categories?
+
+What operational changes could improve low-margin categories?
+
+How might customer segmentation affect inventory management?
